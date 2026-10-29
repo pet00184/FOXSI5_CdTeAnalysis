@@ -1,3 +1,18 @@
+# Project-specific
+# Custom project ignore rules
+Data/
+data/
+*.fits
+*.nc
+*.hdf5
+*.h5
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# ----------------------- General .gitignore created by github ----------------------------
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
