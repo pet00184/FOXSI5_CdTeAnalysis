@@ -8,7 +8,8 @@ from utils.processing.filtering import filter_cdte_events, build_solar_histogram
 
 class FOXSIAlignmentImage:
     """
-    Prepare and plot a FOXSI CdTe X-ray alignment image using unaligned solar coordinates.
+    Prepare and plot a FOXSI CdTe X-ray alignment image using unaligned solar coordinates,
+    including centroid position and statistical/systematic uncertainty estimates.
     """
 
     def __init__(self, cdte_data, cdte):
@@ -27,6 +28,10 @@ class FOXSIAlignmentImage:
 
         self.centroid_x = None
         self.centroid_y = None
+        self.centroid_x_err = None
+        self.centroid_y_err = None
+        self.total_counts_used = None
+        
         self.smoothed_hist = None
         self.centroid_sigma = None
         self.centroid_threshold_fraction = None
@@ -62,6 +67,9 @@ class FOXSIAlignmentImage:
 
         self.centroid_x = None
         self.centroid_y = None
+        self.centroid_x_err = None
+        self.centroid_y_err = None
+        self.total_counts_used = None
         self.smoothed_hist = None
         return self.hist, self.xedges, self.yedges
 
@@ -90,14 +98,41 @@ class FOXSIAlignmentImage:
 
         threshold = threshold_fraction * np.max(region_values)
         mask = region_mask & (smoothed >= threshold)
+        
+        # Calculate raw counts inside the mask for statistical weight
+        raw_counts_mask = self.hist * mask
+        self.total_counts_used = np.sum(raw_counts_mask)
+
         weights = smoothed * mask
         total_weight = np.sum(weights)
 
         if total_weight <= 0:
             raise ValueError("No pixels passed the centroid threshold.")
 
-        self.centroid_x = np.sum(weights * x_centers[:, np.newaxis]) / total_weight
-        self.centroid_y = np.sum(weights * y_centers[np.newaxis, :]) / total_weight
+        # 1. Centroid calculation
+        X, Y = np.meshgrid(x_centers, y_centers, indexing="ij")
+        self.centroid_x = np.sum(weights * X) / total_weight
+        self.centroid_y = np.sum(weights * Y) / total_weight
+
+        # 2. Error Calculations
+        # Spatial bin sizes (discretization error)
+        dx = self.xedges[1] - self.xedges[0]
+        dy = self.yedges[1] - self.yedges[0]
+        sigma_bin_x = dx / np.sqrt(12)
+        sigma_bin_y = dy / np.sqrt(12)
+
+        # Weighted Standard Deviation & Effective sample size
+        n_eff = (total_weight**2) / np.sum(weights**2)
+        variance_x = np.sum(weights * (X - self.centroid_x)**2) / total_weight
+        variance_y = np.sum(weights * (Y - self.centroid_y)**2) / total_weight
+
+        # Standard Error of the weighted mean
+        stat_err_x = np.sqrt(variance_x / n_eff) if n_eff > 1 else np.sqrt(variance_x)
+        stat_err_y = np.sqrt(variance_y / n_eff) if n_eff > 1 else np.sqrt(variance_y)
+
+        # Total Uncertainty (Quadrature sum of statistical and spatial discretization error)
+        self.centroid_x_err = np.sqrt(stat_err_x**2 + sigma_bin_x**2)
+        self.centroid_y_err = np.sqrt(stat_err_y**2 + sigma_bin_y**2)
 
         self.smoothed_hist = smoothed
         self.centroid_sigma = sigma
@@ -105,8 +140,13 @@ class FOXSIAlignmentImage:
         self.centroid_x_range = tuple(x_range)
         self.centroid_y_range = tuple(y_range)
 
-        print(f"{self.cdte} centroid: Solar-X = {self.centroid_x:.2f} arcsec, Solar-Y = {self.centroid_y:.2f} arcsec")
-        return self.centroid_x, self.centroid_y, smoothed
+        print(
+            f"{self.cdte} centroid: "
+            f"Solar-X = {self.centroid_x:.2f} ± {self.centroid_x_err:.2f} arcsec, "
+            f"Solar-Y = {self.centroid_y:.2f} ± {self.centroid_y_err:.2f} arcsec | "
+            f"Counts used = {int(self.total_counts_used)}"
+        )
+        return self.centroid_x, self.centroid_y, (self.centroid_x_err, self.centroid_y_err), smoothed
 
     def plot(self, ax=None, title=None, colorbar=True, xrange=None, yrange=None, rings=True):
         if self.hist is None:
@@ -143,7 +183,11 @@ class FOXSIAlignmentImage:
         self.circle_radius = circle_radius
 
         fig, ax, im = self.plot(ax=ax, title=title, colorbar=colorbar, xrange=xrange, yrange=yrange, rings=rings)
-        self.centroid_artist = ax.plot(self.centroid_x, self.centroid_y, marker="+", color="lime", markersize=cross_size, markeredgewidth=1.8, linestyle="none", label="Centroid", zorder=11)[0]
+        
+        # Label with errors included
+        label_text = f"Centroid ({self.centroid_x:.1f}±{self.centroid_x_err:.1f}``, {self.centroid_y:.1f}±{self.centroid_y_err:.1f}``, Counts used:{self.total_counts_used})"
+        
+        self.centroid_artist = ax.plot(self.centroid_x, self.centroid_y, marker="+", color="lime", markersize=cross_size, markeredgewidth=1.8, linestyle="none", label=label_text, zorder=11)[0]
         self.centroid_circle = Circle((self.centroid_x, self.centroid_y), radius=circle_radius, fill=False, edgecolor="lime", linestyle="--", linewidth=1.5, zorder=9)
 
         ax.add_patch(self.centroid_circle)
