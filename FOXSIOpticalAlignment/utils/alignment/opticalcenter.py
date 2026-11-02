@@ -2,9 +2,57 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle
+import astropy.units as u
+from astropy.time import Time
 from scipy.ndimage import gaussian_filter
 
 from utils.processing.filtering import filter_cdte_events, build_solar_histogram
+
+SPARCS_DICT = {
+    "Target Alpha Pre-Shift": {
+        "North": 336.0 * u.arcsec,
+        "West": -13.0 * u.arcsec,
+    },
+    "Target Alpha": {
+        "North": 336.0 * u.arcsec,
+        "West": -13.0 * u.arcsec - 5 * 60.0 * u.arcsec,
+    },
+    "Target Echo": {
+        "North": 341.0 * u.arcsec,
+        "West": 603.0 * u.arcsec,
+    },
+    "Target Charlie": {
+        "North": 231.0 * u.arcsec,
+        "West": 919.0 * u.arcsec,
+    },
+    "Target Alpha 2": {
+        "North": 336.0 * u.arcsec,
+        "West": -13.0 * u.arcsec,
+    },
+}
+
+TARGET_TIME_DICT = {
+    "Target Alpha": {
+        "UTC start": Time("2026-05-14T19:25:30"),
+        "UTC middle": Time("2026-05-14T19:26:10"),
+        "UTC end": Time("2026-05-14T19:27:00"),
+    },
+    "Target Echo": {
+        "UTC start": Time("2026-05-14T19:27:10"),
+        "UTC middle": Time("2026-05-14T19:28:00"),
+        "UTC end": Time("2026-05-14T19:29:00"),
+    },
+    "Target Charlie": {
+        "UTC start": Time("2026-05-14T19:29:10"),
+        "UTC middle": Time("2026-05-14T19:29:50"),
+        "UTC end": Time("2026-05-14T19:30:30"),
+    },
+    "Target Alpha 2": {
+        "UTC start": Time("2026-05-14T19:30:40"),
+        "UTC middle": Time("2026-05-14T19:30:55"),
+        "UTC end": Time("2026-05-14T19:31:10"),
+    },
+}
 
 class FOXSIAlignmentImage:
     """
@@ -193,3 +241,67 @@ class FOXSIAlignmentImage:
         ax.add_patch(self.centroid_circle)
         ax.legend()
         return fig, ax, im
+
+class CoAlignFOXSI:
+    """
+    Class used for co-aligning FOXSI data using the optical centers.
+    Optical center values are taken from CdTeOpticalCenter.ipynb.
+    """
+
+    OPTICAL_CENTERS = {
+        "CdTe1": {
+            "x": 9.6,
+            "x_error": 3.2,
+            "y": 99.6,
+            "y_error": 3.1,
+            "total_counts": 6613,
+        },
+        "CdTe3": {
+            "x": -20.7,
+            "x_error": 3.1,
+            "y": 82.1,
+            "y_error": 4.1,
+            "total_counts": 1797,
+        },
+        "CdTe4": {
+            "x": 19.2,
+            "x_error": 3.2,
+            "y": 96.8,
+            "y_error": 3.1,
+            "total_counts": 6921,
+        },
+        "CdTe5": {
+            "x": 10.0,
+            "x_error": 3.4,
+            "y": 98.1,
+            "y_error": 3.0,
+            "total_counts": 1017,
+        },
+    }
+
+    @classmethod
+    def get_optical_center_shifts(
+        cls,
+        optical_centers=None,
+        reference_detector="CdTe4",
+    ):
+        """
+        Calculate the shifts needed to align every detector's optical center
+        with the reference detector's optical center.
+
+        Shifts are in arcseconds and are added to the original event coordinates.
+        """
+        if optical_centers is None:
+            optical_centers = cls.OPTICAL_CENTERS
+
+        reference = optical_centers[reference_detector]
+
+        shifts = {}
+
+        for detector, center in optical_centers.items():
+            shifts[detector] = {
+                "dx": reference["x"] - center["x"],
+                "dy": reference["y"] - center["y"],
+            }
+
+        return shifts
