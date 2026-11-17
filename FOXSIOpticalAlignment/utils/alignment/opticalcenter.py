@@ -6,8 +6,6 @@ import astropy.units as u
 from astropy.time import Time
 from scipy.ndimage import gaussian_filter
 
-from utils.processing.filtering import filter_cdte_events, build_solar_histogram
-
 SPARCS_DICT = {
     "Target Alpha Pre-Shift": {
         "North": 336.0 * u.arcsec,
@@ -97,9 +95,13 @@ class FOXSIAlignmentImage:
 
     def filter_events(self, qualityflag=True, energy_range=None):
         """Apply optional quality and energy filters."""
+        from utils.processing.filtering import filter_cdte_events
+
         return filter_cdte_events(self.cdte_data, qualityflag=qualityflag, energy_range=energy_range)
 
     def prepare_image(self, qualityflag=True, energy_range=None, bins=200, plot_range=(-1000.0, 1000.0)):
+        from utils.processing.filtering import build_solar_histogram
+
         if bins < 1:
             raise ValueError("bins must be a positive integer.")
         if len(plot_range) != 2 or plot_range[0] >= plot_range[1]:

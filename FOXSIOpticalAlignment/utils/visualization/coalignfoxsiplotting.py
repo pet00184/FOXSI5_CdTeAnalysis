@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import astropy.units as u
 
+from pathlib import Path
+import subprocess
+
 from utils.processing.filtering import get_cdte_target_coordinates
 from scipy.ndimage import gaussian_filter
 from utils.processing.filtering import filter_cdte_events
@@ -174,6 +177,7 @@ def plot_optical_center_aligned(
         ax.set_xlabel("Solar-X [arcsec]")
         ax.set_ylabel("Solar-Y [arcsec]")
         ax.grid(alpha=0.2)
+        ax.set_aspect("equal", adjustable="box") #will add this into all plotting so that the aspect ratio stays consistent!!
 
         if xlim is not None:
             ax.set_xlim(xlim)
@@ -203,13 +207,14 @@ def plot_optical_center_contour_comparison(
     contour_fractions=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
     xlim=None,
     ylim=None,
-    figsize=(16, 7),
+    figsize=(16, 12),
 ):
     """
     Compare detector contours before and after optical-center alignment.
 
-    Left: Original, unshifted coordinates.
-    Right: Coordinates shifted to align optical centers.
+    Top left: All detectors in original, unshifted coordinates.
+    Remaining plots: Individual detectors shifted to align with
+    the reference detector's optical center.
     """
 
     optical_shifts = CoAlignFOXSI.get_optical_center_shifts(
@@ -217,15 +222,22 @@ def plot_optical_center_contour_comparison(
         reference_detector=reference_detector,
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    # Create four subplots
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
 
-    for ax, align, title in zip(
-        axes,
-        [False, True],
-        ["Unaligned", f"Aligned to {reference_detector}"],
-    ):
+    axes = axes.flatten()
 
-        for detector in DETECTORS:
+    # Define which detectors appear in each subplot
+    plot_configs = [
+        (False, DETECTORS, "Unaligned — All Detectors"),
+        (True, ["CdTe1", "CdTe4"], f"CdTe1 Aligned to {reference_detector}"),
+        (True, ["CdTe3", "CdTe4"], f"CdTe3 Aligned to {reference_detector}"),
+        (True, ["CdTe5", "CdTe4"], f"CdTe5 Aligned to {reference_detector}"),
+    ]
+
+    for ax, (align, detectors, title) in zip(axes, plot_configs):
+
+        for detector in detectors:
 
             x, y = _get_detector_coordinates(
                 cdte_target_dict=cdte_target_dict,
@@ -263,6 +275,7 @@ def plot_optical_center_contour_comparison(
         ax.set_xlabel("Solar-X [arcsec]")
         ax.set_ylabel("Solar-Y [arcsec]")
         ax.grid(alpha=0.2)
+        ax.set_aspect("equal", adjustable="box")
 
         if xlim is not None:
             ax.set_xlim(xlim)
@@ -270,7 +283,7 @@ def plot_optical_center_contour_comparison(
         if ylim is not None:
             ax.set_ylim(ylim)
 
-    # Shared legend for the detectors.
+    # Shared legend for the detectors
     handles = [
         plt.Line2D(
             [0],
@@ -288,7 +301,7 @@ def plot_optical_center_contour_comparison(
         bbox_to_anchor=(0.5, 1.02),
     )
 
-    fig.suptitle(target, y=1.08, fontsize=14)
+    fig.suptitle(target, y=1.06, fontsize=14)
     fig.tight_layout()
 
     return fig, axes
@@ -433,6 +446,7 @@ def plot_combined_optical_center_data(
     ax.set_ylabel("Solar-Y [arcsec]")
     ax.grid(alpha=0.2)
     ax.legend()
+    ax.set_aspect("equal", adjustable="box")
 
     if xlim is not None:
         ax.set_xlim(xlim)
@@ -557,6 +571,7 @@ def plot_sparcs_shifted_data(
     ax.set_ylabel("Solar-Y [arcsec]")
     ax.grid(alpha=0.2)
     ax.legend()
+    ax.set_aspect("equal", adjustable="box")
 
     if xlim is not None:
         ax.set_xlim(xlim)
@@ -646,62 +661,26 @@ def make_sparcs_shifted_cdte_map(
     qualityflag=True,
     energy_range=None,
     specific_cdte=None,
+    data_product="SPARCS shifted data",
 ):
     """
-    Make a SunPy map from the SPARCS-shifted combined CdTe data.
+    Make a SunPy map from a selected shifted combined CdTe product.
 
-    The resulting map uses the coordinate frame of the supplied AIA map.
-    Its pixel coordinates represent Solar-X and Solar-Y in arcseconds.
-
-    Parameters
-    ----------
-    cdte_target_dict : dict
-        Dictionary containing the combined CdTe data products.
-
-    target : str
-        Target name.
-
-    aia_map : sunpy.map.GenericMap
-        AIA map providing the coordinate frame.
-
-    bins : int
-        Number of histogram bins along each axis.
-
-    plot_range : tuple
-        Solar-X and Solar-Y histogram limits in arcseconds.
-
-    sigma : float or None
-        Gaussian smoothing sigma in histogram pixels.
-        Set to None to disable smoothing.
-
-    qualityflag : bool
-        If True, retain only events with flag_quality == 1.
-
-    energy_range : tuple or None
-        Optional energy range passed to filter_cdte_events.
-
-    specific_cdte : str, list, tuple, or None
-        Optional detector selection. None uses all detectors.
-
-    Returns
-    -------
-    sunpy.map.GenericMap
-        SPARCS-shifted combined CdTe map.
+    data_product can be:
+        "SPARCS shifted data"
+        "Manual Pointing"
     """
 
-    # Retrieve the SPARCS-shifted combined data.
     data = (
         cdte_target_dict["Combined Data"][target]
-        ["SPARCS shifted data"]["Data"]
+        [data_product]["Data"]
     )
 
-    # Optionally select individual detectors.
     data = _select_cdte_detectors(
         data,
         specific_cdte=specific_cdte,
     )
 
-    # Apply the existing quality and energy filters.
     x, y = filter_cdte_events(
         data,
         qualityflag=qualityflag,
@@ -713,7 +692,6 @@ def make_sparcs_shifted_cdte_map(
             f"No valid CdTe events remain for {target}."
         )
 
-    # Make the 2D histogram.
     image, xedges, yedges = np.histogram2d(
         x,
         y,
@@ -721,14 +699,11 @@ def make_sparcs_shifted_cdte_map(
         range=[plot_range, plot_range],
     )
 
-    # Transpose to match the usual image / SunPy map orientation.
     image = image.T
 
-    # Optional smoothing.
     if sigma is not None:
         image = gaussian_filter(image, sigma=sigma)
 
-    # Pixel scale in arcseconds per pixel.
     pixel_scale = u.Quantity(
         [
             xedges[1] - xedges[0],
@@ -737,8 +712,6 @@ def make_sparcs_shifted_cdte_map(
         u.arcsec,
     ) / u.pixel
 
-    # The histogram coordinate system is Solar-X / Solar-Y,
-    # with (0, 0) at the center of the histogram.
     reference_coord = SkyCoord(
         0 * u.arcsec,
         0 * u.arcsec,
@@ -771,68 +744,26 @@ def plot_sparcs_cdte_on_aia(
     xlim=None,
     ylim=None,
     figsize=(9, 9),
+    manual_com_position=None,
+    centroid_sigma=2.0,
+    threshold_fraction=0.5,
+    centroid_x_range=None,
+    centroid_y_range=None,
 ):
     """
-    Plot SPARCS-shifted combined CdTe contours over an AIA image.
+    Plot manually adjusted combined CdTe contours over an AIA image.
 
-    The AIA frame is selected using the manually specified UTC middle
-    time for the requested target, unless an AIA map is supplied.
+    The original SPARCS pointing is shown as a red star.
+    The final CdTe center of mass is shown as a green star.
 
-    Parameters
-    ----------
-    cdte_target_dict : dict
-        Dictionary containing the combined CdTe data products.
-
-    target : str
-        Target name, e.g. "Target Alpha".
-
-    aia_wavelength : int
-        AIA wavelength, e.g. 94, 171, or 211.
-
-    aia_map : sunpy.map.GenericMap or None
-        Optional AIA map. If None, the closest frame is selected
-        using TARGET_TIME_DICT.
-
-    aia_dir : str
-        Directory containing AIA FITS files.
-
-    bins : int
-        Number of histogram bins along each axis.
-
-    plot_range : tuple
-        Solar-X and Solar-Y histogram limits in arcseconds.
-
-    sigma : float or None
-        Gaussian smoothing sigma in histogram pixels.
-        Set to None to disable smoothing.
-
-    qualityflag : bool
-        If True, retain only events with flag_quality == 1.
-
-    energy_range : tuple or None
-        Optional energy range passed to filter_cdte_events.
-
-    specific_cdte : str, list, tuple, or None
-        Optional detector selection. None uses all detectors.
-
-    levels : tuple
-        Contour levels expressed as percentages of the maximum
-        smoothed CdTe histogram value.
-
-    xlim, ylim : tuple or None
-        Optional Solar-X and Solar-Y plot limits in arcseconds.
-
-    figsize : tuple
-        Figure size.
-
-    Returns
-    -------
-    fig, ax, cdte_map, aia_map
+    manual_com_position:
+        Desired final (Solar-X, Solar-Y) COM position in arcseconds.
+        If None, the measured COM is retained without a manual shift.
     """
 
-    # ---------------------------------------------------------
-    # Select the AIA map
-    # ---------------------------------------------------------
+    from utils.processing.filtering import build_manual_pointing_cdte_data
+
+    # Select the AIA map.
     if aia_map is None:
         aia_map = get_closest_aia_map(
             target=target,
@@ -840,9 +771,26 @@ def plot_sparcs_cdte_on_aia(
             aia_dir=aia_dir,
         )
 
-    # ---------------------------------------------------------
-    # Make the SPARCS-shifted CdTe map
-    # ---------------------------------------------------------
+    # Calculate the CdTe COM and build the manual-pointing product.
+    build_manual_pointing_cdte_data(
+        cdte_target_dict=cdte_target_dict,
+        target=target,
+        manual_com_position=manual_com_position,
+        bins=bins,
+        plot_range=plot_range,
+        qualityflag=qualityflag,
+        energy_range=energy_range,
+        centroid_sigma=centroid_sigma,
+        threshold_fraction=threshold_fraction,
+        centroid_x_range=centroid_x_range,
+        centroid_y_range=centroid_y_range,
+    )
+
+    manual_product = (
+        cdte_target_dict["Combined Data"][target]["Manual Pointing"]
+    )
+
+    # Make the map using the manually adjusted data.
     cdte_map = make_sparcs_shifted_cdte_map(
         cdte_target_dict=cdte_target_dict,
         target=target,
@@ -853,38 +801,27 @@ def plot_sparcs_cdte_on_aia(
         qualityflag=qualityflag,
         energy_range=energy_range,
         specific_cdte=specific_cdte,
+        data_product="Manual Pointing",
     )
 
-    # ---------------------------------------------------------
-    # Set up the plot
-    # ---------------------------------------------------------
+    # Set up the plot.
     fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(projection=aia_map)
 
-    ax = fig.add_subplot(
-        projection=aia_map,
-    )
+    cmap = getattr(cm, f"sdoaia{aia_wavelength}")
 
-    # AIA colormap.
-    cmap = getattr(
-        cm,
-        f"sdoaia{aia_wavelength}",
-    )
-
-    # Logarithmic image normalization.
     norm = ImageNormalize(
         aia_map.data,
         stretch=LogStretch(),
     )
 
-    aia_image = aia_map.plot(
+    aia_map.plot(
         axes=ax,
         cmap=cmap,
         norm=norm,
     )
 
-    # ---------------------------------------------------------
-    # Overlay CdTe contours
-    # ---------------------------------------------------------
+    # Overlay CdTe contours.
     cdte_map.draw_contours(
         axes=ax,
         levels=np.asarray(levels) * u.percent,
@@ -892,9 +829,46 @@ def plot_sparcs_cdte_on_aia(
         linewidths=1.5,
     )
 
-    # ---------------------------------------------------------
-    # Optional plot limits
-    # ---------------------------------------------------------
+    # Original SPARCS optical center.
+    sparcs_x = SPARCS_DICT[target]["West"]
+    sparcs_y = SPARCS_DICT[target]["North"]
+
+    sparcs_coord = SkyCoord(
+        sparcs_x,
+        sparcs_y,
+        frame=aia_map.coordinate_frame,
+    )
+
+    ax.plot_coord(
+        sparcs_coord,
+        marker="*",
+        color="red",
+        markersize=10,
+        linestyle="none",
+        label="SPARCS optical center",
+        zorder=15,
+    )
+
+    # Final CdTe center of mass.
+    com_coord = SkyCoord(
+        manual_product["final_com_x"] * u.arcsec,
+        manual_product["final_com_y"] * u.arcsec,
+        frame=aia_map.coordinate_frame,
+    )
+
+    ax.plot_coord(
+        com_coord,
+        marker="*",
+        color="lime",
+        markersize=10,
+        markeredgecolor="black",
+        markeredgewidth=0.5,
+        linestyle="none",
+        label="CdTe center of mass",
+        zorder=16,
+    )
+
+    # Optional plot limits.
     if xlim is not None and ylim is not None:
 
         bottom_left = SkyCoord(
@@ -912,19 +886,9 @@ def plot_sparcs_cdte_on_aia(
         bl_pix = aia_map.world_to_pixel(bottom_left)
         tr_pix = aia_map.world_to_pixel(top_right)
 
-        ax.set_xlim(
-            bl_pix.x.value,
-            tr_pix.x.value,
-        )
+        ax.set_xlim(bl_pix.x.value, tr_pix.x.value)
+        ax.set_ylim(bl_pix.y.value, tr_pix.y.value)
 
-        ax.set_ylim(
-            bl_pix.y.value,
-            tr_pix.y.value,
-        )
-
-    # ---------------------------------------------------------
-    # Labels and title
-    # ---------------------------------------------------------
     target_time = TARGET_TIME_DICT[target]["UTC middle"]
 
     detector_label = (
@@ -944,9 +908,424 @@ def plot_sparcs_cdte_on_aia(
 
     ax.set_xlabel("Solar-X [arcsec]")
     ax.set_ylabel("Solar-Y [arcsec]")
-
     ax.grid(True)
+    ax.legend(loc="upper right")
 
     plt.tight_layout()
 
     return fig, ax, cdte_map, aia_map
+
+#### TRYING TO MAKE MOVIES STUFF HERE
+
+def _select_cdte_time_range(data, timerange, target_start):
+    """
+    Select CdTe events using elapsed time relative to the first event.
+
+    The target dictionary provides the authoritative start time.
+    Event UTC timestamps are used only to determine relative timing.
+    """
+    if len(data) == 0:
+        return data
+
+    event_times = Time(data["utc"])
+
+    # Shift event timestamps so the first event corresponds to
+    # the authoritative target start time.
+    relative_times = event_times - event_times.min()
+    corrected_times = target_start + relative_times
+
+    start, end = timerange
+    mask = (corrected_times >= start) & (corrected_times < end)
+
+    return data[mask]
+
+def make_manual_pointing_cdte_map(
+    cdte_target_dict,
+    target,
+    aia_map,
+    timerange=None,
+    bins=300,
+    plot_range=(-1500, 1500),
+    sigma=2,
+    qualityflag=True,
+    energy_range=None,
+    specific_cdte=None,
+):
+    """
+    Make a SunPy map from the manually pointed combined CdTe data.
+
+    Optionally restricts the events to a specified UTC time interval.
+    """
+
+    # Retrieve the manually pointed combined data.
+    data = (
+        cdte_target_dict["Combined Data"][target]
+        ["Manual Pointing"]["Data"]
+    )
+
+    # Select the time interval for this frame.
+    if timerange is not None:
+        data = _select_cdte_time_range(
+            data,
+            timerange,
+            target_start=TARGET_TIME_DICT[target]["UTC start"],
+        )
+
+    # Optionally select individual detectors.
+    data = _select_cdte_detectors(
+        data,
+        specific_cdte=specific_cdte,
+    )
+
+    # Apply quality and energy filters.
+    x, y = filter_cdte_events(
+        data,
+        qualityflag=qualityflag,
+        energy_range=energy_range,
+    )
+
+    if len(x) == 0:
+        raise ValueError(
+            f"No valid CdTe events remain for {target} "
+            f"during {timerange}."
+        )
+
+    # Make the 2D histogram.
+    image, xedges, yedges = np.histogram2d(
+        x,
+        y,
+        bins=bins,
+        range=[plot_range, plot_range],
+    )
+
+    image = image.T
+
+    # Optional Gaussian smoothing.
+    if sigma is not None:
+        image = gaussian_filter(image, sigma=sigma)
+
+    # Pixel scale in arcseconds per pixel.
+    pixel_scale = u.Quantity(
+        [
+            xedges[1] - xedges[0],
+            yedges[1] - yedges[0],
+        ],
+        u.arcsec,
+    ) / u.pixel
+
+    # Use the AIA coordinate frame.
+    reference_coord = SkyCoord(
+        0 * u.arcsec,
+        0 * u.arcsec,
+        frame=aia_map.coordinate_frame,
+    )
+
+    header = make_fitswcs_header(
+        image,
+        reference_coord,
+        scale=pixel_scale,
+    )
+
+    return Map(image, header)
+
+def plot_manual_pointing_cdte_on_aia(
+    cdte_target_dict,
+    target,
+    aia_wavelength,
+    aia_map,
+    timerange,
+    bins=300,
+    plot_range=(-1500, 1500),
+    sigma=2,
+    qualityflag=True,
+    energy_range=None,
+    specific_cdte=None,
+    levels=(20, 30, 40, 50, 60, 70, 80, 90, 95),
+    xlim=None,
+    ylim=None,
+    figsize=(9, 9),
+):
+    """Plot one time-resolved, manually pointed CdTe frame over AIA."""
+
+    # Make the time-resolved CdTe map.
+    cdte_map = make_manual_pointing_cdte_map(
+        cdte_target_dict=cdte_target_dict,
+        target=target,
+        aia_map=aia_map,
+        timerange=timerange,
+        bins=bins,
+        plot_range=plot_range,
+        sigma=sigma,
+        qualityflag=qualityflag,
+        energy_range=energy_range,
+        specific_cdte=specific_cdte,
+    )
+
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(projection=aia_map)
+
+    # Plot AIA background.
+    cmap = getattr(cm, f"sdoaia{aia_wavelength}")
+
+    norm = ImageNormalize(
+        aia_map.data,
+        stretch=LogStretch(),
+    )
+
+    aia_map.plot(
+        axes=ax,
+        cmap=cmap,
+        norm=norm,
+    )
+
+    # Overlay CdTe contours.
+    cdte_map.draw_contours(
+        axes=ax,
+        levels=np.asarray(levels) * u.percent,
+        colors="cyan",
+        linewidths=1.5,
+    )
+
+    # Original SPARCS pointing.
+    sparcs_x = SPARCS_DICT[target]["West"]
+    sparcs_y = SPARCS_DICT[target]["North"]
+
+    sparcs_coord = SkyCoord(
+        sparcs_x,
+        sparcs_y,
+        frame=aia_map.coordinate_frame,
+    )
+
+    ax.plot_coord(
+        sparcs_coord,
+        marker="*",
+        color="red",
+        markersize=13,
+        linestyle="none",
+        label="SPARCS pointing",
+    )
+
+    # Final COM from the manual-pointing product.
+    manual_product = (
+        cdte_target_dict["Combined Data"][target]["Manual Pointing"]
+    )
+
+    final_com = SkyCoord(
+        manual_product["final_com_x"] * u.arcsec,
+        manual_product["final_com_y"] * u.arcsec,
+        frame=aia_map.coordinate_frame,
+    )
+
+    ax.plot_coord(
+        final_com,
+        marker="*",
+        color="lime",
+        markersize=13,
+        linestyle="none",
+        label="Final CdTe COM",
+    )
+
+    # Apply plot limits.
+    if xlim is not None and ylim is not None:
+
+        bottom_left = SkyCoord(
+            xlim[0] * u.arcsec,
+            ylim[0] * u.arcsec,
+            frame=aia_map.coordinate_frame,
+        )
+
+        top_right = SkyCoord(
+            xlim[1] * u.arcsec,
+            ylim[1] * u.arcsec,
+            frame=aia_map.coordinate_frame,
+        )
+
+        bl_pix = aia_map.world_to_pixel(bottom_left)
+        tr_pix = aia_map.world_to_pixel(top_right)
+
+        ax.set_xlim(bl_pix.x.value, tr_pix.x.value)
+        ax.set_ylim(bl_pix.y.value, tr_pix.y.value)
+
+    start, end = (Time(t) for t in timerange)
+
+    ax.set_title(
+        f"{target} — AIA {aia_wavelength} Å\n"
+        f"{start.isot} – {end.isot} UTC"
+    )
+
+    ax.set_xlabel("Solar-X [arcsec]")
+    ax.set_ylabel("Solar-Y [arcsec]")
+    ax.legend()
+    ax.grid(True)
+
+    plt.tight_layout()
+
+    return fig, ax, cdte_map
+
+def get_closest_aia_frame(aia_sequence, target_time):
+    """Return the AIA map closest in time to the requested UTC time."""
+
+    target_time = Time(target_time)
+
+    aia_times = np.array([
+        Time(aia_map.date).unix
+        for aia_map in aia_sequence
+    ])
+
+    closest_index = np.argmin(
+        np.abs(aia_times - target_time.unix)
+    )
+
+    return aia_sequence[closest_index]
+
+def make_manual_pointing_cdte_movie_frames(
+    cdte_target_dict,
+    target,
+    cadence=5 * u.s,
+    duration=5 * u.s,
+    bins=300,
+    sigma=2,
+    energy_range=None,
+    qualityflag=True,
+    aia_wavelength=94,
+    aia_dir="/Users/pet00184/FOXSI_Analysis/FOXSI5_CdTeAnalysis/Data/AIA",
+    savepath="./movie_frames/",
+    plot_range=(-1500, 1500),
+    xlim=None,
+    ylim=None,
+    specific_cdte=None,
+    clear_existing=False,
+):
+    """
+    Generate PNG frames of manually pointed combined CdTe data over AIA.
+
+    Each frame contains events within a specified UTC time interval.
+    """
+
+    savepath = Path(savepath)
+    savepath.mkdir(parents=True, exist_ok=True)
+
+    if cadence <= 0 * u.s or duration <= 0 * u.s:
+        raise ValueError("Cadence and duration must both be positive.")
+
+    # Optionally clear old movie frames.
+    if clear_existing:
+        for old_frame in savepath.glob("frame_*.png"):
+            old_frame.unlink()
+
+    # Get the target observation times.
+    start = TARGET_TIME_DICT[target]["UTC start"]
+    end = TARGET_TIME_DICT[target]["UTC end"]
+
+    # Load the AIA sequence once.
+    aia_files = sorted(
+        glob(f"{aia_dir}/*{aia_wavelength}*.fits")
+    )
+
+    if not aia_files:
+        raise FileNotFoundError(
+            f"No AIA {aia_wavelength} Å FITS files found in {aia_dir}"
+        )
+
+    aia_sequence = Map(aia_files, sequence=True)
+
+    frame = 0
+    t = start
+
+    while t < end:
+
+        frame_end = min(t + duration, end)
+        frame_midpoint = t + (frame_end - t) / 2
+
+        print(
+            f"Creating frame {frame:04d}: "
+            f"{t.isot} – {frame_end.isot}"
+        )
+
+        # Find the closest AIA frame to the middle of this interval.
+        aia_map = get_closest_aia_frame(
+            aia_sequence,
+            frame_midpoint,
+        )
+
+        # Plot this time interval.
+        fig, ax, cdte_map = plot_manual_pointing_cdte_on_aia(
+            cdte_target_dict=cdte_target_dict,
+            target=target,
+            aia_wavelength=aia_wavelength,
+            aia_map=aia_map,
+            timerange=(t, frame_end),
+            bins=bins,
+            plot_range=plot_range,
+            sigma=sigma,
+            qualityflag=qualityflag,
+            energy_range=energy_range,
+            specific_cdte=specific_cdte,
+            xlim=xlim,
+            ylim=ylim,
+        )
+
+        # Save the frame.
+        fig.savefig(
+            savepath / f"frame_{frame:04d}.png",
+            dpi=200,
+        )
+
+        plt.close(fig)
+
+        frame += 1
+        t += cadence
+
+    print(f"\nFinished creating {frame} frames in {savepath}")
+
+    return frame
+
+def make_movie(
+    frame_dir,
+    output_name="foxsi_movie.mp4",
+    fps=10,
+    pattern="frame_%04d.png",
+    quality=18,
+):
+    """
+    Convert PNG movie frames into an MP4 using ffmpeg.
+
+    Lower CRF quality values produce higher-quality, larger files.
+    """
+
+    frame_dir = Path(frame_dir)
+
+    if not frame_dir.exists():
+        raise FileNotFoundError(
+            f"Frame directory does not exist: {frame_dir}"
+        )
+
+    if len(list(frame_dir.glob("frame_*.png"))) == 0:
+        raise FileNotFoundError(
+            f"No PNG frames found in {frame_dir}"
+        )
+
+    input_pattern = str(frame_dir / pattern)
+    output_path = frame_dir / output_name
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-framerate", str(fps),
+        "-start_number", "0",
+        "-i", input_pattern,
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "-c:v", "libx264",
+        "-crf", str(quality),
+        "-pix_fmt", "yuv420p",
+        str(output_path),
+    ]
+
+    print("Creating movie:")
+    print(" ".join(command))
+
+    subprocess.run(command, check=True)
+
+    print(f"\nSaved movie:\n{output_path}")
+
+    return output_path
